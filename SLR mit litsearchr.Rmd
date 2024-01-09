@@ -1,0 +1,132 @@
+---
+title: "SLR mit `litsearchr`"
+author: "Daria Szafran"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, results=FALSE}
+#install.packages("remotes")
+library("remotes")
+install_github("elizagrames/litsearchr", ref="main")
+library(tidyverse)
+library(stopwords)
+library(rio)
+```
+
+```{r, echo=F, include=F}
+keywordgroups <- data.frame(Population = c("street-level bureaucra*", "caseworker*", "unemploy*", "jobseeker*", "", "", "", "", "", "", ""),
+                            Intervention = c("profiling", "algorithmic profiling", "classification of jobseekers", "algorithmic tool*", "algorithmic decision-making", "automated decision-making", "street-level algorithm*", "data work", "artificial intelligence", "ai", "human oversight"),
+                            Context = c("public employment services", "public services", "", "", "", "", "", "", "", "", ""))
+```
+
+# Systematic Literature Review nach Grames et al. 2019
+
+## 1. Naive search
+  - a. Identify research question.
+    -   **How are algorithmic profiling tools used in PES affecting the directly involved stakeholders (caseworkers and job seekers) within the job placement process?**
+  
+  - b. Identify the concept groups.
+    -   PICOC: **P**opulation, **I**ntervention, **C**omparison, **O**utcome, **C**ontext
+  
+  - c. Use prior knowledge, or consult colleagues or experts in the field to generate an initial list of search terms that fit the concept groups (PICOC): the naive search should be as relevant to the topic as possible; when choosing terms for the naive search, think both laterally (choose synonyms) and vertically (different levels of the terms).
+    -   We applied the pearl-growing method to select relevant keywords for the naive search. We identified three articles as *pearls*. Starting from those articles, we used backward and forward searching through citations.
+    -   The resulting keywords (note that we did not define any keywords for the Comparison and Outcome concept groups):
+    ```{r, echo=F}
+knitr::kable(keywordgroups)
+``` 
+  
+  - d. Combine the concept groups into a search string.
+    -   The resulting search string for the naive search is: **(street-level bureaucra\* OR caseworker\* OR unemploy\* OR jobseeker\*) AND (profiling OR algorithmic profiling OR classification of jobseekers OR algorithmic tool\* OR algorithmic decision-making OR automated decision-making OR street-level algorithm\* OR data work OR artificial intelligence OR ai) AND (public employment services OR public services)**
+  
+  - e. Assess how discrete the search is and modify it as needed: "(...) if you get more than 700 for a narrowly defined question or more than 1500 for a broader question, you are not being precise enough and the keywords that `litsearchr` identifies will not be as relevant because the keyword co-occurrence network will be diluted by irrelevant studies".
+    -   There is no need to search all databases for the naive search (I exported results from *Web of Science* and *EBSCO* as suggested by Jessica Daikeler who also worked on a SLR with this package)
+    -   Naive search using the above string yielded the following results (as of December 6, 2023; note that these are **unfiltered** for source type and year):
+        -   Web of Science: **513 results**
+        -   EBSCO: **2,629 results**
+
+## 2. Importing results and removing duplicates
+```{r}
+search_directory <- "/Users/dariaszafran/Desktop/SLR/References_231206/"
+
+# Importing all references; the function automatically creates a data frame containing the references from both databases
+naiveimport <- litsearchr::import_results(directory = search_directory, verbose = T)
+
+# Removing duplicates; there were 246 duplicates
+naiveresults <- litsearchr::remove_duplicates(naiveimport, field = "title", method = "string_osa")
+```
+
+## 3. Identifying potential keywords
+```{r}
+# Identifying keywords based on a function that approximates the Rapid Automatic Keyword Extraction algorithm
+rakekeywords <- litsearchr::extract_terms(text = paste(naiveresults$title, naiveresults$abstract),
+                                          method = "fakerake",
+                                          min_freq = 2, # only get keywords that appear at least twice in the full set of results
+                                          ngrams = T,
+                                          min_n = 2, # get keywords that consist of at least two words
+                                          language = "English")
+
+# Identifying keywords based on database tagged keywords
+taggedkeywords <- litsearchr::extract_terms(keywords = naiveresults$keywords,
+                                            method = "tagged",
+                                            min_freq = 2,
+                                            ngrams = T,
+                                            min_n = 2,
+                                            language = "English")
+```
+
+## 4. Building the keyword co-occurrence network
+```{r, echo=F, include=F}
+all_keywords <- unique(append(taggedkeywords, rakekeywords))
+
+naivedfm <- litsearchr::create_dfm(elements = paste(naiveresults$title, naiveresults$abstract),
+                                   features = all_keywords)
+
+naivegraph <- litsearchr::create_network(search_dfm = naivedfm,
+                                        min_studies = 2,
+                                        min_occ = 2)
+```
+
+## 5. Identifying change points in keyword importance
+```{r}
+cutoff <- litsearchr::find_cutoff(naivegraph,
+                                  method = "cumulative",
+                                  percent = .80,
+                                  imp_method = "strength")
+
+reduced_graph <- litsearchr::reduce_graph(naivegraph, cutoff_strength = cutoff[1])
+
+searchterms <- as.data.frame(litsearchr::get_keywords(reduced_graph))
+
+head(searchterms, 20)
+```
+
+## 6. Grouping terms into concepts
+```{r}
+# Exporting the potential keywords so that they can be grouped manually in Excel
+rio::export(searchterms, "searchterms_231208.xlsx")
+
+searchterms <- readxl::read_xlsx("/Users/dariaszafran/Desktop/SLR/searchterms_231208.xlsx")
+write.table(searchterms$`litsearchr::get_keywords(reduced_graph)`, file = "searchterms_slr", sep = " ", row.names = F, quote = F)
+
+
+
+
+broad_science_df <- as.data.frame(broad_science)
+write.table(broad_science_df$broad_science, file = "stopwords_slr", sep = " ", row.names = F, quote = F)
+```
+
+
+  
+  
+  
+
+
+# References
+
+  - Grames, E. M., Stillman, A. N., Tingley, M. W., & Elphick, C. S. (2019). An automated approach to identifying search terms for systematic reviews using keyword co‐occurrence networks. *Methods in Ecology and Evolution*, 10(10), 1645-1654.
+ - [`litsearchr` Tutorial]("https://luketudge.github.io/litsearchr-tutorial/litsearchr_tutorial.html")
